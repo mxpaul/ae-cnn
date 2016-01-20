@@ -6,6 +6,7 @@ use warnings;
 use Carp;
 use Data::Dumper;
 use AnyEvent::Socket;
+#use Scalar::Util qw(openhandle);
 
 our $VERSION=0.001;
 
@@ -54,6 +55,8 @@ sub connect {
 				if ( $read_bytes ) {
 					if ($self->{on_read}) { $self->{on_read}->($self, $rbuf)};
 				} elsif( $read_bytes == 0) { # EOF
+					#undef $self->{_read_watcher};
+					#close $self->{_fd};
 					croak 'Server disconneceted';
 				} else { # Analyse errno
 					croak 'Read error: '. $!;
@@ -68,6 +71,20 @@ sub connect {
 sub on_read {
 	my $self = shift;
 	$self->{on_read} = shift or croak "Need callback";
+}
+
+sub write: method {
+	my $self = shift;
+	my $data = shift;
+	#croak 'Have nothing to write to' unless $self->{_fd};
+	#croak 'File descriptor closed' unless openhandle($self->{_fd});
+	my $written_bytes = syswrite $self->{_fd}, $data, length $data, 0;
+	if ($written_bytes == length $data) { # Success
+	} elsif ( defined $written_bytes) { # Partial write, should queue rest of the data
+		croak 'Partial write';
+	} else {
+		croak 'write error: ' . $!;
+	}
 }
 
 1;
