@@ -1,5 +1,5 @@
 ---
-abstract: 'Example TCP connecter'
+abstract: 'Example TCP connector'
 author:
   - 'Maxim Polyakov <mmonk@cpan.org>'
 build_requires:
