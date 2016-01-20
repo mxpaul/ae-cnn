@@ -13,23 +13,23 @@
     	$cnn->write("GET HTTP/1.1 /\n\n");
     });
     
-    $cnn->on_read = sub {
+    $cnn->on_read( sub {
 			my $cnn = shift;
     	my $data = shift;
     	substr($buf,-1,0,$data);
 			$cnn->disconnect if (length($buf) > 1024);
-    };
+    });
 
-    $cnn->on_disconnect(sub { 
+    $cnn->on_disconnect( sub { 
 			my $cnn = shift;
     	EV::unloop;
     });
     
-    $cnn->on_error = sub {
+    $cnn->on_error( sub {
 			my $cnn = shift;
     	warn "Will try to reconect after connection error: $!";
 			$buf = ''; # Reset buffer to read again
-    };
+    });
     
     $cnn->connect;
     
