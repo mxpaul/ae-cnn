@@ -37,7 +37,7 @@ sub disconnect {
 	if ($self->{on_disconnect}) {
 		$self->{on_disconnect}->($self);
 	}
-	#%$self = ();
+	%$self = map { $_ => $self->{$_} } grep { /^_/} keys %$self;
 	return;
 }
 
@@ -49,9 +49,25 @@ sub connect {
 			if (ref $self->{on_connect}) {
 				$self->{on_connect}->($self);
 			}
+			$self->{_read_watcher} = AE::io $self->{_fd}, 0, sub {
+				my $read_bytes = sysread $self->{_fd}, my $rbuf, 2<<17,0;
+				if ( $read_bytes ) {
+					if ($self->{on_read}) { $self->{on_read}->($self, $rbuf)};
+				} elsif( $read_bytes == 0) { # EOF
+					croak 'Server disconneceted';
+				} else { # Analyse errno
+					croak 'Read error: '. $!;
+				}
+			};
 		} else {
+			croak 'Connect error: '. $!;
 		}	
 	});
+}
+
+sub on_read {
+	my $self = shift;
+	$self->{on_read} = shift or croak "Need callback";
 }
 
 1;
