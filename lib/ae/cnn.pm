@@ -15,6 +15,7 @@ sub new {
 	#warn Dumper \@_;
 	my %opt = (
 		auto_reconnect => 1,
+		timeout        => 1,
 		@_,
 	);
 	croak 'Need host' unless $opt{host};
@@ -44,28 +45,40 @@ sub disconnect {
 
 sub connect {
 	my $self = shift;
-	tcp_connect($self->{host},  $self->{port}, sub { 
-		( $self->{_fd}, $self->{_local_host}, $self->{_local_port} )= @_;
-		if ($self->{_fd}) {
-			if (ref $self->{on_connect}) {
-				$self->{on_connect}->($self);
-			}
-			$self->{_read_watcher} = AE::io $self->{_fd}, 0, sub {
-				my $read_bytes = sysread $self->{_fd}, my $rbuf, 2<<17,0;
-				if ( $read_bytes ) {
-					if ($self->{on_read}) { $self->{on_read}->($self, $rbuf)};
-				} elsif( $read_bytes == 0) { # EOF
-					#undef $self->{_read_watcher};
-					#close $self->{_fd};
-					croak 'Server disconneceted';
-				} else { # Analyse errno
-					croak 'Read error: '. $!;
+	$self->{_conn_guard} = tcp_connect($self->{host},  $self->{port}, 
+		sub { 
+			undef $self->{_conn_timer};
+			( $self->{_fd}, $self->{_local_host}, $self->{_local_port} )= @_;
+			if ($self->{_fd}) {
+				if (ref $self->{on_connect}) {
+					$self->{on_connect}->($self);
 				}
-			};
-		} else {
-			croak 'Connect error: '. $!;
-		}	
-	});
+				$self->{_read_watcher} = AE::io $self->{_fd}, 0, sub {
+					my $read_bytes = sysread $self->{_fd}, my $rbuf, 2<<17,0;
+					if ( $read_bytes ) {
+						if ($self->{on_read}) { $self->{on_read}->($self, $rbuf)};
+					} elsif( $read_bytes == 0) { # EOF
+						#undef $self->{_read_watcher};
+						#close $self->{_fd};
+						croak 'Server disconneceted';
+					} else { # Analyse errno
+						croak 'Read error: '. $!;
+					}
+				};
+			} else {
+				if ($self->{on_connfail}) {
+					$self->{on_connfail}->($self, $!);
+				}
+			}	
+		}, 
+	);
+	$self->{_conn_timer} = AE::timer $self->{timeout}, 0, sub {
+		undef $self->{_conn_timer};
+		undef $self->{_conn_guard};
+		if ($self->{on_connfail}) {
+			$self->{on_connfail}->($self, 'Connection timed out');
+		}
+	};
 }
 
 sub on_read {
@@ -85,6 +98,11 @@ sub write: method {
 	} else {
 		croak 'write error: ' . $!;
 	}
+}
+
+sub on_connfail{
+	my $self = shift;
+	$self->{on_connfail} = shift or croak "Need callback";
 }
 
 1;
