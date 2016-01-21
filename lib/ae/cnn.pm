@@ -23,67 +23,58 @@ sub new {
 	bless ( \%opt, $class);
 }
 
-sub on_connect{
-	my $self = shift;
-	my $cb   = shift or croak 'Need callback';
-	$self->{on_connect} = $cb;
-};
-sub on_disconnect{
-	my $self = shift;
-	my $cb   = shift or croak 'Need callback';
-	$self->{on_disconnect} = $cb;
-};
-
-sub disconnect {
-	my $self = shift;
-	if ($self->{on_disconnect}) {
-		$self->{on_disconnect}->($self);
+BEGIN {
+	no strict 'refs';
+	# define connection callbacks setters
+	for my $event ( qw (connect disconnect read connfail) ) {
+		my $cb_name="on_$event";
+		* $cb_name = sub {
+			$_[0]->{$cb_name} = $_[1] or croak 'Need callback';
+		};
 	}
-	%$self = map { $_ => $self->{$_} } grep { /^_/} keys %$self;
-	return;
 }
 
-sub connect {
+sub connect: method {
 	my $self = shift;
 	$self->{_conn_guard} = tcp_connect($self->{host},  $self->{port}, 
 		sub { 
 			undef $self->{_conn_timer};
 			( $self->{_fd}, $self->{_local_host}, $self->{_local_port} )= @_;
 			if ($self->{_fd}) {
-				if (ref $self->{on_connect}) {
-					$self->{on_connect}->($self);
-				}
-				$self->{_read_watcher} = AE::io $self->{_fd}, 0, sub {
-					my $read_bytes = sysread $self->{_fd}, my $rbuf, 2<<17,0;
-					if ( $read_bytes ) {
-						if ($self->{on_read}) { $self->{on_read}->($self, $rbuf)};
-					} elsif( $read_bytes == 0) { # EOF
-						#undef $self->{_read_watcher};
-						#close $self->{_fd};
-						croak 'Server disconneceted';
-					} else { # Analyse errno
-						croak 'Read error: '. $!;
-					}
-				};
+				$self->_invoke_cb('on_connect');
+				$self->_set_conn_readwatcher;
 			} else {
-				if ($self->{on_connfail}) {
-					$self->{on_connfail}->($self, $!);
-				}
+				$self->_invoke_cb('on_connfail', $!);
 			}	
 		}, 
 	);
 	$self->{_conn_timer} = AE::timer $self->{timeout}, 0, sub {
-		undef $self->{_conn_timer};
-		undef $self->{_conn_guard};
-		if ($self->{on_connfail}) {
-			$self->{on_connfail}->($self, 'Connection timed out');
-		}
+		delete $self->{$_} for qw (_conn_timer _conn_guard) ;
+		$self->_invoke_cb('on_connfail', 'Connection timed out');
 	};
 }
 
-sub on_read {
+sub disconnect: method {
 	my $self = shift;
-	$self->{on_read} = shift or croak "Need callback";
+	$self->_invoke_cb('on_disconnect');
+	%$self = map { $_ => $self->{$_} } grep { /^_/} keys %$self;
+	return;
+}
+
+sub _set_conn_readwatcher {
+	my $self = shift;
+	$self->{_read_watcher} = AE::io $self->{_fd}, 0, sub {
+		my $read_bytes = sysread $self->{_fd}, my $rbuf, 2<<17,0;
+		if ( $read_bytes ) {
+			if ($self->{on_read}) { $self->{on_read}->($self, $rbuf)};
+		} elsif( $read_bytes == 0) { # EOF
+			#undef $self->{_read_watcher};
+			#close $self->{_fd};
+			croak 'Server disconneceted';
+		} else { # Analyse errno
+			croak 'Read error: '. $!;
+		}
+	};
 }
 
 sub write: method {
@@ -100,9 +91,10 @@ sub write: method {
 	}
 }
 
-sub on_connfail{
+sub _invoke_cb {
 	my $self = shift;
-	$self->{on_connfail} = shift or croak "Need callback";
+	my $name = shift;
+	$self->{$name}->($self,@_) if $self->{$name};
 }
 
 1;
