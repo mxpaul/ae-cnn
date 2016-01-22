@@ -31,6 +31,7 @@ BAIL_OUT "Can not start TCP server: $!" unless $server_fh;
 	#*ae::cnn::tcp_connect=*AnyEvent::Socket::tcp_connect;
 }
 
+# Case 1. Connection timeout
 my $complete_cv = AE::cvt;
 my $cnn = ae::cnn->new( host => $server_host, port => $server_port, timeout => 0.01);
 $cnn->on_connect(sub { $complete_cv->send(1); });
@@ -41,10 +42,11 @@ $cnn->connect;
 is($connected, 0, 'Connfail callback called after timeout');
 like($reason, qr/timed out/i, 'Reason set when connection timed out');
 
+# Case 2. Connection refused
 undef $server_guard; # Now we will get connection refused instead of timeout
 close($server_fh);
 undef $cnn;
-{ # Return original tcp_connect to test connection reset condition
+{ # Return original tcp_connect to test connection refused condition
 	no warnings 'redefine';
 	#sub ae::cnn::tcp_connect($$$;$){ }
 	*ae::cnn::tcp_connect=*AnyEvent::Socket::tcp_connect;
