@@ -6,7 +6,7 @@ use warnings;
 use Carp;
 use Data::Dumper;
 use AnyEvent::Socket;
-#use Scalar::Util qw(openhandle);
+use Scalar::Util qw(openhandle);
 
 our $VERSION=0.001;
 
@@ -29,7 +29,13 @@ BEGIN {
 	for my $event ( qw (connect disconnect read connfail) ) {
 		my $cb_name="on_$event";
 		* $cb_name = sub {
-			$_[0]->{$cb_name} = $_[1] or croak 'Need callback';
+			$_[0]->{$cb_name} = $_[1];# or croak 'Need callback';
+		};
+	}
+	# Define property setters
+	for my $setter ( qw (timeout host port) ) {
+		* $setter = sub {
+			$_[0]->{$setter} = $_[1];
 		};
 	}
 }
@@ -41,24 +47,38 @@ sub connect: method {
 			undef $self->{_conn_timer};
 			( $self->{_fd}, $self->{_local_host}, $self->{_local_port} )= @_;
 			if ($self->{_fd}) {
-				$self->_invoke_cb('on_connect');
 				$self->_set_conn_readwatcher;
+				$self->_invoke_cb('on_connect');
 			} else {
 				$self->_invoke_cb('on_connfail', $!);
+				$self->reconnect;
 			}	
 		}, 
 	);
 	$self->{_conn_timer} = AE::timer $self->{timeout}, 0, sub {
 		delete $self->{$_} for qw (_conn_timer _conn_guard) ;
 		$self->_invoke_cb('on_connfail', 'Connection timed out');
+		$self->reconnect;
 	};
+}
+
+sub reconnect {
+	my $self = shift;
+	$self->_go_disconnected;
+	$self->connect;
 }
 
 sub disconnect: method {
 	my $self = shift;
 	$self->_invoke_cb('on_disconnect');
-	%$self = map { $_ => $self->{$_} } grep { /^_/} keys %$self;
+	$self->_go_disconnected;
 	return;
+}
+
+sub _go_disconnected{
+	my $self = shift;
+	close $self->{_fd} if openhandle($self->{_fd});
+	%$self = map { $_ => $self->{$_} } grep { /^[^_]/} keys %$self;
 }
 
 sub _set_conn_readwatcher {
@@ -68,9 +88,9 @@ sub _set_conn_readwatcher {
 		if ( $read_bytes ) {
 			if ($self->{on_read}) { $self->{on_read}->($self, $rbuf)};
 		} elsif( $read_bytes == 0) { # EOF
-			#undef $self->{_read_watcher};
-			#close $self->{_fd};
-			croak 'Server disconneceted';
+			#$self->_go_disconnected;
+			$self->reconnect;
+			carp 'Server disconneceted';
 		} else { # Analyse errno
 			croak 'Read error: '. $!;
 		}
